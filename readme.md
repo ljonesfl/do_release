@@ -4,6 +4,11 @@ Shell script to automate the git flow release process.
 # Prerequisites 
 Install [bump](https://github.com/ljonesfl/bump)
 
+# Installation (MacOS)
+
+	chmod +x do_release
+	cp do_release /usr/local/bin
+
 # Usage
 
 `do_release`
