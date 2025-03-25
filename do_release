@@ -1,0 +1,153 @@
+#!/bin/bash
+set -e  # Exit immediately if a command fails
+set -o pipefail  # Exit on failure in piped commands
+
+SKIP_TESTS=false  # Default behavior: run tests
+
+# Detects:
+#   Rails
+#   Python
+#   Php
+
+function detect_environment()
+{
+  if [ -f "Gemfile" ] && grep -q "rspec" Gemfile.lock 2>/dev/null; then
+    echo "rails"
+  elif [ -f "composer.json" ] && [ -d "vendor" ]; then
+    echo "php"
+  elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+    echo "python"
+  else
+    echo "unknown"
+  fi
+}
+
+# Run the tests for the detected environment.
+
+function run_tests()
+{
+  ENVIRONMENT=$(detect_environment)
+  echo "Detected environment: $ENVIRONMENT"
+
+  case "$ENVIRONMENT" in
+    rails)
+      echo "Running Rails (RSpec) tests..."
+      bundle exec rspec || { echo "RSpec tests failed"; exit 1; }
+      ;;
+    php)
+      echo "Running PHP (PHPUnit) tests..."
+      ./vendor/bin/phpunit tests || { echo "PHPUnit tests failed"; exit 1; }
+      ;;
+    python)
+      echo "Running Python tests..."
+      if [ -f "pytest.ini" ] || [ -d "tests" ]; then
+          pytest || { echo "pytest tests failed"; exit 1; }
+      else
+          python -m unittest discover || { echo "unittest tests failed"; exit 1; }
+      fi
+      ;;
+    *)
+      echo "Error: Could not detect a valid environment."
+      exit 1
+      ;;
+  esac
+}
+
+# In the develop branch:
+#   Bumps the minor version number
+#   Adds the new version number to the top of versionlog.md
+#   Commits and pushes the new version.
+
+function git_next_version()
+{
+  echo 'Setting up next version...'
+  bump -p && echo -e "## $(bump)\n\n$(cat versionlog.md)" > versionlog.md
+  git commit -am "bump"
+  git push
+}
+
+# Pushes the master branch and tags then switches back to develop.
+
+function git_push_release()
+{
+  echo 'Pushing the release...'
+  git checkout master
+  git push
+  git push --tags
+  git checkout develop
+}
+
+# Updates master then creates a new gitflow release using the current version number.
+
+function git_release()
+{
+  echo 'Starting the release...'
+  git checkout master
+  git pull
+  git checkout develop
+  bump | xargs git flow release start || { echo "git flow release start failed"; exit 1; }
+}
+
+# Adds the current date next to the top version in versionlog.md then performs a release.
+
+function build()
+{
+  echo "Preparing release $(bump)..."
+
+  if $SKIP_TESTS; then
+    echo "Skipping test execution."
+  else
+    run_tests
+  fi
+
+  git_release
+
+  if [ "$STRATEGY" = "semver" ]; then
+    # I sincerely apologize for this. It was the only way I could figure out how to add the date.
+
+    DATE=$(date +"%Y-%m-%d")
+    awk -v date="$DATE" '/^## [0-9]+\.[0-9]+\.[0-9]+$/ && !added { print $0, date; added=1; next } 1' versionlog.md > tmpfile && mv tmpfile versionlog.md
+  else
+    # Prepend the version to versionlog.md for date strategy
+    VERSION=$(bump)
+    echo -e "## $VERSION\n\n$(cat versionlog.md)" > versionlog.md
+  fi
+
+  git commit -am "Updated versionlog.md"
+  git flow release finish -m "release"
+
+  git_push_release
+
+  if [ "$STRATEGY" = "semver" ]; then
+    git_next_version
+  fi
+}
+
+version_file=".version.json"
+
+if ! [ -f "$version_file" ]; then
+  echo "Error: $version_file not found."
+  exit 1
+fi
+
+STRATEGY=$(jq -r '.strategy' .version.json)
+
+if [ -z "$STRATEGY" ]; then
+  echo "Missing strategy. Defaulting to 'semver'"
+  STRATEGY="semver"
+fi
+
+echo "Strategy: $STRATEGY"
+
+for arg in "$@"; do
+  if [[ "$arg" == "--skip-tests" ]]; then
+    SKIP_TESTS=true
+  fi
+
+  if [[ "$arg" == "--show-environment" ]]; then
+    detect_environment
+    exit
+  fi
+done
+
+build
