@@ -120,6 +120,8 @@ function build()
 
   if [ "$STRATEGY" = "semver" ]; then
     git_next_version
+  else
+  	git push
   fi
 }
 
