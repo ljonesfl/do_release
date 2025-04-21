@@ -3,6 +3,7 @@ set -e  # Exit immediately if a command fails
 set -o pipefail  # Exit on failure in piped commands
 
 SKIP_TESTS=false  # Default behavior: run tests
+BRANCH="master"
 
 # Detects:
 #   Rails
@@ -66,27 +67,26 @@ function git_next_version()
   git push
 }
 
-# Pushes the master branch and tags then switches back to develop.
-
+# Pushes the specified branch and tags then switches back to develop.
 function git_push_release()
 {
-  echo 'Pushing the release...'
-  git checkout master
+  echo "Pushing the release to $BRANCH..."
+  git checkout "$BRANCH"
   git push
   git push --tags
   git checkout develop
 }
 
-# Updates master then creates a new gitflow release using the current version number.
-
+# Updates the specified branch then creates a new gitflow release.
 function git_release()
 {
-  echo 'Starting the release...'
-  git checkout master
+  echo "Starting the release on $BRANCH..."
+  git checkout "$BRANCH"
   git pull
   git checkout develop
   bump | xargs git flow release start || { echo "git flow release start failed"; exit 1; }
 }
+
 
 # Adds the current date next to the top version in versionlog.md then performs a release.
 
@@ -144,12 +144,20 @@ echo "Strategy: $STRATEGY"
 for arg in "$@"; do
   if [[ "$arg" == "--skip-tests" ]]; then
     SKIP_TESTS=true
+    echo "Skipping tests."
   fi
 
   if [[ "$arg" == "--show-environment" ]]; then
     detect_environment
     exit
   fi
+
+  if [[ "$arg" == --branch=* ]]; then
+    BRANCH="${arg#--branch=}"
+  fi
 done
+
+echo "do_release v1.1"
+echo "Branch: $BRANCH"
 
 build
