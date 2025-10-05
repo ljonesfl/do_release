@@ -138,7 +138,8 @@ function build()
   fi
 
   git commit -am "Updated versionlog.md"
-  git flow release finish -m "release"
+  export GIT_MERGE_AUTOEDIT=no
+  git flow release finish -m "release" -m "release"
 
   git_push_release
 

@@ -24,3 +24,9 @@ To test the environment detection, run:
 
 `do_release --show-environment`
 
+To override the main branch name, run:
+`do_release --branch main`
+
+# Notes
+- The script assumes the main branch is named `master` and the development branch is named `develop`.
+- The script assumes you are using git flow.
