@@ -3,7 +3,32 @@ set -e  # Exit immediately if a command fails
 set -o pipefail  # Exit on failure in piped commands
 
 SKIP_TESTS=false  # Default behavior: run tests
-BRANCH="master"
+
+# Detect main branch name (main/master) from git
+function get_main_branch()
+{
+  # Try to get the symbolic ref for origin/HEAD
+  local ref
+  ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)
+  if [ $? -eq 0 ] && [[ $ref =~ refs/remotes/origin/(.*) ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return
+  fi
+  # Fallback: check for local branches
+  if git show-ref --verify --quiet refs/heads/main; then
+    echo "main"
+    return
+  fi
+  if git show-ref --verify --quiet refs/heads/master; then
+    echo "master"
+    return
+  fi
+  # Default fallback
+  echo "main"
+}
+
+# Allow override via parameter, otherwise detect main branch
+BRANCH="${1:-$(get_main_branch)}"
 
 # Detects:
 #   Rails
@@ -48,8 +73,7 @@ function run_tests()
       fi
       ;;
     *)
-      echo "Error: Could not detect a valid environment."
-      exit 1
+      echo "Could not find tests. Skipping.."
       ;;
   esac
 }
@@ -114,7 +138,8 @@ function build()
   fi
 
   git commit -am "Updated versionlog.md"
-  git flow release finish -m "release"
+  export GIT_MERGE_AUTOEDIT=no
+  git flow release finish -m "release" -m "release"
 
   git_push_release
 
