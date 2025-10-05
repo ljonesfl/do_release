@@ -1,3 +1,5 @@
+## 2025.10.4
+
 * Now tries to detect the main branch name automatically.
 * Skips the merge messages when finishing the release.
 
