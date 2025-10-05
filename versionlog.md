@@ -1,6 +1,8 @@
+* Now tries to detect the main branch name automatically.
+
 ## 2025.4.21
 
-* Added --branch to specify the main brainch name.
+* Added --branch to specify the main branch name.
 
 ## 2025.4.9
 
