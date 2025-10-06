@@ -1,3 +1,7 @@
+## 2025.10.5
+
+* Fixes an issue with branch detection.
+
 ## 2025.10.4
 
 * Now tries to detect the main branch name automatically.
