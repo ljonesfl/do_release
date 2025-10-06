@@ -1,28 +1,7 @@
 #!/bin/bash
 
-# Abort if there are unstaged changes in develop or main branch
-function abort_if_unstaged_changes() 
-{
-  local branches=("develop" "$(get_main_branch)")
-  for branch in "${branches[@]}"; do
-    git checkout "$branch" >/dev/null 2>&1
-    if [[ -n $(git status --porcelain) ]]; then
-      echo "Error: Unstaged changes detected in $branch. Please commit or stash them before running this script."
-      exit 1
-    fi
-  done
-  git checkout develop >/dev/null 2>&1
-}
-
-abort_if_unstaged_changes
-set -e  # Exit immediately if a command fails
-set -o pipefail  # Exit on failure in piped commands
-
-SKIP_TESTS=false  # Default behavior: run tests
-
 # Detect main branch name (main/master) from git
-function get_main_branch()
-{
+function get_main_branch() {
   # Try to get the symbolic ref for origin/HEAD
   local ref
   ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)
@@ -43,24 +22,24 @@ function get_main_branch()
   echo "main"
 }
 
-
-# Detects:
-#   Rails
-#   Python
-#   Php
-
-function detect_environment()
-{
-  if [ -f "Gemfile" ] && grep -q "rspec" Gemfile.lock 2>/dev/null; then
-    echo "rails"
-  elif [ -f "composer.json" ] && [ -d "vendor" ]; then
-    echo "php"
-  elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
-    echo "python"
-  else
-    echo "unknown"
-  fi
+## Abort if there are any uncommitted changes (staged or unstaged) in develop or main branch
+function abort_if_uncommitted_changes() {
+  local branches=("develop" "$(get_main_branch)")
+  for branch in "${branches[@]}"; do
+    git checkout "$branch" >/dev/null 2>&1
+    if [[ -n $(git status --porcelain) ]]; then
+      echo "Error: Uncommitted changes detected in $branch. Please commit or stash them before running this script."
+      exit 1
+    fi
+  done
+  git checkout develop >/dev/null 2>&1
 }
+
+abort_if_uncommitted_changes
+set -e  # Exit immediately if a command fails
+set -o pipefail  # Exit on failure in piped commands
+
+SKIP_TESTS=false  # Default behavior: run tests
 
 # Run the tests for the detected environment.
 

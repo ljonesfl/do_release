@@ -1,4 +1,5 @@
-* Checks for unstaged changes.
+* Checks for unstaged/uncommited changes.
+
 
 ## 2025.10.5
 
