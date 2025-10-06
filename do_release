@@ -1,4 +1,20 @@
 #!/bin/bash
+
+# Abort if there are unstaged changes in develop or main branch
+function abort_if_unstaged_changes() 
+{
+  local branches=("develop" "$(get_main_branch)")
+  for branch in "${branches[@]}"; do
+    git checkout "$branch" >/dev/null 2>&1
+    if [[ -n $(git status --porcelain) ]]; then
+      echo "Error: Unstaged changes detected in $branch. Please commit or stash them before running this script."
+      exit 1
+    fi
+  done
+  git checkout develop >/dev/null 2>&1
+}
+
+abort_if_unstaged_changes
 set -e  # Exit immediately if a command fails
 set -o pipefail  # Exit on failure in piped commands
 
