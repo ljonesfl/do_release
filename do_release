@@ -1,11 +1,7 @@
 #!/bin/bash
-set -e  # Exit immediately if a command fails
-set -o pipefail  # Exit on failure in piped commands
-
-SKIP_TESTS=false  # Default behavior: run tests
 
 # Detect main branch name (main/master) from git
-function get_main_branch()
+function get_main_branch() 
 {
   # Try to get the symbolic ref for origin/HEAD
   local ref
@@ -27,13 +23,22 @@ function get_main_branch()
   echo "main"
 }
 
+## Abort if there are any uncommitted changes (staged or unstaged) in develop or main branch
+function abort_if_uncommitted_changes() 
+{
+  local branches=("develop" "$(get_main_branch)")
+  for branch in "${branches[@]}"; do
+    git checkout "$branch" >/dev/null 2>&1
+    if [[ -n $(git status --porcelain) ]]; then
+      echo "Error: Uncommitted changes detected in $branch. Please commit or stash them before running this script."
+      exit 1
+    fi
+  done
+  git checkout develop >/dev/null 2>&1
+}
 
-# Detects:
-#   Rails
-#   Python
-#   Php
-
-function detect_environment()
+# Detects the environment: rails, php, python, or unknown
+function detect_environment() 
 {
   if [ -f "Gemfile" ] && grep -q "rspec" Gemfile.lock 2>/dev/null; then
     echo "rails"
@@ -47,7 +52,6 @@ function detect_environment()
 }
 
 # Run the tests for the detected environment.
-
 function run_tests()
 {
   ENVIRONMENT=$(detect_environment)
@@ -147,6 +151,12 @@ function build()
   	git push
   fi
 }
+
+abort_if_uncommitted_changes
+set -e  # Exit immediately if a command fails
+set -o pipefail  # Exit on failure in piped commands
+
+SKIP_TESTS=false  # Default behavior: run tests
 
 version_file=".version.json"
 

@@ -1,3 +1,8 @@
+## 2025.10.6
+
+* Checks for unstaged/uncommited changes.
+
+
 ## 2025.10.5
 
 * Fixes an issue with branch detection.
