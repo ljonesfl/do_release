@@ -27,8 +27,6 @@ function get_main_branch()
   echo "main"
 }
 
-# Allow override via parameter, otherwise detect main branch
-BRANCH="${1:-$(get_main_branch)}"
 
 # Detects:
 #   Rails
@@ -180,7 +178,11 @@ for arg in "$@"; do
   if [[ "$arg" == --branch=* ]]; then
     BRANCH="${arg#--branch=}"
   fi
+
 done
+
+# Set BRANCH to detected value or default to main branch
+BRANCH="${BRANCH:-$(get_main_branch)}"
 
 echo "do_release v1.1"
 echo "Branch: $BRANCH"
