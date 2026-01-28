@@ -1,3 +1,6 @@
+* Added --no-verify for version file related commits to skip pre-commit hooks.
+* Added auto build bumping for same-day date strategy releases.
+
 ## 2025.10.6
 
 * Checks for unstaged/uncommited changes.

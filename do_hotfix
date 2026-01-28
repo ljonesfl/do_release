@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Detect main branch name (main/master) from git
-function get_main_branch() 
+function get_main_branch()
 {
   # Try to get the symbolic ref for origin/HEAD
   local ref
@@ -23,9 +23,16 @@ function get_main_branch()
   echo "main"
 }
 
-## Abort if there are any uncommitted changes (staged or unstaged) in develop or main branch
-function abort_if_uncommitted_changes() 
+## Abort if there are any uncommitted changes (staged or unstaged)
+function abort_if_uncommitted_changes()
 {
+  if [[ -n $(git status --porcelain) ]]; then
+    echo "Error: Uncommitted changes detected in current branch. Please commit or stash them before running this script."
+    exit 1
+  fi
+
+  local current_branch
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
   local branches=("develop" "$(get_main_branch)")
   for branch in "${branches[@]}"; do
     git checkout "$branch" >/dev/null 2>&1
@@ -34,11 +41,11 @@ function abort_if_uncommitted_changes()
       exit 1
     fi
   done
-  git checkout develop >/dev/null 2>&1
+  git checkout "$current_branch" >/dev/null 2>&1
 }
 
 # Detects the environment: rails, php, python, or unknown
-function detect_environment() 
+function detect_environment()
 {
   if [ -f "Gemfile" ] && grep -q "rspec" Gemfile.lock 2>/dev/null; then
     echo "rails"
@@ -80,97 +87,43 @@ function run_tests()
   esac
 }
 
-# For date strategy, stamp or bump build based on today.
-function bump_date_strategy()
+# Start the hotfix from main/master using the bumped patch version.
+function git_hotfix_start()
 {
-  local today
-  local current
-  today=$(date +"%Y.%-m.%-d")
-  current="$(jq -r '.major' .version.json).$(jq -r '.minor' .version.json).$(jq -r '.patch' .version.json)"
-
-  if [ "$current" = "$today" ]; then
-    echo "Date strategy: $today already stamped. Bumping build..."
-    bump --build
-  else
-    echo "Date strategy: stamping $today..."
-    bump --stamp
-  fi
-}
-
-# In the develop branch:
-#   Bumps the minor version number
-#   Adds the new version number to the top of versionlog.md
-#   Commits and pushes the new version.
-
-function git_next_version()
-{
-  echo 'Setting up next version...'
-  bump -p && echo -e "## $(bump)\n\n$(cat versionlog.md)" > versionlog.md
-  git commit -am "bump" --no-verify
-  git push
-}
-
-# Pushes the specified branch and tags then switches back to develop.
-function git_push_release()
-{
-  echo "Pushing the release to $BRANCH..."
-  git checkout "$BRANCH"
-  git push
-  git push --tags
-  git checkout develop
-}
-
-# Updates the specified branch then creates a new gitflow release.
-function git_release()
-{
-  echo "Starting the release on $BRANCH..."
+  echo "Starting hotfix on $BRANCH..."
   git checkout "$BRANCH"
   git pull
-  git checkout develop
-  bump | xargs git flow release start || { echo "git flow release start failed"; exit 1; }
+  bump -p | xargs git flow hotfix start || { echo "git flow hotfix start failed"; exit 1; }
 }
 
-
-# Adds the current date next to the top version in versionlog.md then performs a release.
-
-function build()
+# Finish the hotfix, update versionlog, and push changes.
+function git_hotfix_finish()
 {
+  echo "Preparing hotfix $(bump)..."
+
   if $SKIP_TESTS; then
     echo "Skipping test execution."
   else
     run_tests
   fi
 
-  if [ "$STRATEGY" != "semver" ]; then
-    bump_date_strategy
-  fi
-
-  echo "Preparing release $(bump)..."
-
-  git_release
-
   if [ "$STRATEGY" = "semver" ]; then
-    # I sincerely apologize for this. It was the only way I could figure out how to add the date.
-
     DATE=$(date +"%Y-%m-%d")
     awk -v date="$DATE" '/^## [0-9]+\.[0-9]+\.[0-9]+$/ && !added { print $0, date; added=1; next } 1' versionlog.md > tmpfile && mv tmpfile versionlog.md
   else
-    # Prepend the version to versionlog.md for date strategy
     VERSION=$(bump)
     echo -e "## $VERSION\n\n$(cat versionlog.md)" > versionlog.md
   fi
 
   git commit -am "Updated versionlog.md" --no-verify
   export GIT_MERGE_AUTOEDIT=no
-  git flow release finish -m "release" -m "release"
+  git flow hotfix finish -m "hotfix" -m "hotfix"
 
-  git_push_release
-
-  if [ "$STRATEGY" = "semver" ]; then
-    git_next_version
-  else
-  	git push
-  fi
+  git checkout "$BRANCH"
+  git push
+  git push --tags
+  git checkout develop
+  git push
 }
 
 abort_if_uncommitted_changes
@@ -193,7 +146,7 @@ if [ -z "$STRATEGY" ]; then
   STRATEGY="semver"
 fi
 
-echo "Strategy: $STRATEGY"
+MODE=""
 
 for arg in "$@"; do
   if [[ "$arg" == "--skip-tests" ]]; then
@@ -210,12 +163,39 @@ for arg in "$@"; do
     BRANCH="${arg#--branch=}"
   fi
 
+  if [[ "$arg" == "--start" ]]; then
+    MODE="start"
+  fi
+
+  if [[ "$arg" == "--finish" ]]; then
+    MODE="finish"
+  fi
 done
 
-# Set BRANCH to detected value or default to main branch
+if [ -z "$MODE" ]; then
+  echo "Error: Must provide --start or --finish"
+  exit 1
+fi
+
+if [ "$MODE" = "start" ] && $SKIP_TESTS; then
+  echo "Note: --skip-tests is only used for --finish."
+fi
+
 BRANCH="${BRANCH:-$(get_main_branch)}"
 
-echo "do_release v1.1"
+echo "do_hotfix v1.0"
 echo "Branch: $BRANCH"
+echo "Strategy: $STRATEGY"
 
-build
+if [ "$MODE" = "start" ]; then
+  git_hotfix_start
+elif [ "$MODE" = "finish" ]; then
+  if ! [ -f "versionlog.md" ]; then
+    echo "Error: versionlog.md not found."
+    exit 1
+  fi
+  git_hotfix_finish
+else
+  echo "Error: Unknown mode $MODE"
+  exit 1
+fi
