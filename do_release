@@ -95,6 +95,8 @@ function bump_date_strategy()
     echo "Date strategy: stamping $today..."
     bump --stamp
   fi
+
+  git commit -am "bump" --no-verify
 }
 
 # In the develop branch:
