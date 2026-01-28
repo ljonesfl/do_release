@@ -1,3 +1,5 @@
+## 2026.1.27
+
 * Added --no-verify for version file related commits to skip pre-commit hooks.
 * Added auto build bumping for same-day date strategy releases.
 
