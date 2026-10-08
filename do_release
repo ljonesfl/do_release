@@ -3,6 +3,16 @@
 # Detect main branch name (main/master) from git
 function get_main_branch() 
 {
+  # Prefer git-flow's configured production branch. origin/HEAD reports the
+  # repo's *default* branch, which in a gitflow repo is often develop, and
+  # releasing to develop would leave the production branch unpushed.
+  local gitflow_master
+  gitflow_master=$(git config --get gitflow.branch.master 2>/dev/null)
+  if [ -n "$gitflow_master" ]; then
+    echo "$gitflow_master"
+    return
+  fi
+
   # Try to get the symbolic ref for origin/HEAD
   local ref
   ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)
@@ -26,9 +36,23 @@ function get_main_branch()
 ## Abort if there are any uncommitted changes (staged or unstaged) in develop or main branch
 function abort_if_uncommitted_changes() 
 {
-  local branches=("develop" "$(get_main_branch)")
+  local main_branch
+  local branches=("develop")
+  main_branch=$(get_main_branch)
+
+  # Only add the production branch when it is a different branch, otherwise we
+  # check develop twice and never look at the branch we are releasing to.
+  if [ "$main_branch" != "develop" ]; then
+    branches+=("$main_branch")
+  fi
+
   for branch in "${branches[@]}"; do
-    git checkout "$branch" >/dev/null 2>&1
+    # A failed checkout would leave us on the previous branch and silently
+    # report its status as though it were this one.
+    if ! git checkout "$branch" >/dev/null 2>&1; then
+      echo "Error: Could not check out $branch. Does it exist locally?"
+      exit 1
+    fi
     if [[ -n $(git status --porcelain) ]]; then
       echo "Error: Uncommitted changes detected in $branch. Please commit or stash them before running this script."
       exit 1
@@ -80,23 +104,21 @@ function run_tests()
   esac
 }
 
-# For date strategy, stamp or bump build based on today.
+# For the date strategy, stamp today's date onto the version.
+# No need to check whether today was already stamped: the build number is a
+# lifetime counter, so stamping the same date twice still advances it and the
+# release stays uniquely identified.
 function bump_date_strategy()
 {
-  local today
-  local current
-  today=$(date +"%Y.%-m.%-d")
-  current="$(jq -r '.major' .version.json).$(jq -r '.minor' .version.json).$(jq -r '.patch' .version.json)"
-
-  if [ "$current" = "$today" ]; then
-    echo "Date strategy: $today already stamped. Bumping build..."
-    bump --build
-  else
-    echo "Date strategy: stamping $today..."
-    bump --stamp
-  fi
+  echo "Date strategy: stamping $(date +"%Y.%-m.%-d")..."
+  bump --stamp
 
   git commit -am "bump" --no-verify
+
+  if [ -f "pubspec.yaml" ] && grep -q '^flutter:' pubspec.yaml; then
+    echo "Flutter project: refreshing iOS version config..."
+    flutter build ios --config-only || echo "Warning: flutter build ios --config-only failed"
+  fi
 }
 
 # In the develop branch:
@@ -110,6 +132,39 @@ function git_next_version()
   bump -p && echo -e "## $(bump)\n\n$(cat versionlog.md)" > versionlog.md
   git commit -am "bump" --no-verify
   git push
+}
+
+# Prints the unfinished gitflow release branch, if any.
+# Aborts when there is more than one, since there is no way to know which to resume.
+function find_release_branch()
+{
+  local prefix
+  local branches
+  prefix=$(git config --get gitflow.prefix.release || echo "release/")
+  branches=$(git for-each-ref --format='%(refname:short)' "refs/heads/${prefix}")
+
+  if [ "$(echo "$branches" | grep -c .)" -gt 1 ]; then
+    echo "Error: more than one unfinished release found. Finish or delete all but one:" >&2
+    echo "$branches" >&2
+    exit 1
+  fi
+
+  echo "$branches"
+}
+
+# True when a release was finished locally but $BRANCH was never pushed.
+function release_needs_push()
+{
+  git rev-parse --quiet --verify "refs/remotes/origin/$BRANCH" >/dev/null || return 1
+  [ "$(git rev-list --count "origin/$BRANCH..$BRANCH")" -gt 0 ]
+}
+
+# True when the current version has already been tagged as a release.
+function current_version_released()
+{
+  local tag_prefix
+  tag_prefix=$(git config --get gitflow.prefix.versiontag || true)
+  git rev-parse --quiet --verify "refs/tags/${tag_prefix}$(bump)" >/dev/null
 }
 
 # Pushes the specified branch and tags then switches back to develop.
@@ -129,49 +184,88 @@ function git_release()
   git checkout "$BRANCH"
   git pull
   git checkout develop
-  bump | xargs git flow release start || { echo "git flow release start failed"; exit 1; }
+  git flow release start "$VERSION" || { echo "git flow release start failed"; exit 1; }
 }
 
-
-# Adds the current date next to the top version in versionlog.md then performs a release.
-
-function build()
+# Adds the release to versionlog.md and commits it.
+# Safe to run again when resuming: it does nothing if the release is already logged.
+function update_versionlog()
 {
-  if $SKIP_TESTS; then
-    echo "Skipping test execution."
-  else
-    run_tests
-  fi
-
-  if [ "$STRATEGY" != "semver" ]; then
-    bump_date_strategy
-  fi
-
-  echo "Preparing release $(bump)..."
-
-  git_release
-
   if [ "$STRATEGY" = "semver" ]; then
     # I sincerely apologize for this. It was the only way I could figure out how to add the date.
+    # Only the top heading is dated, and only if it has no date yet.
 
-    DATE=$(date +"%Y-%m-%d")
-    awk -v date="$DATE" '/^## [0-9]+\.[0-9]+\.[0-9]+$/ && !added { print $0, date; added=1; next } 1' versionlog.md > tmpfile && mv tmpfile versionlog.md
-  else
+    local top
+    top=$(grep -m1 '^## ' versionlog.md || true)
+    if [[ $top =~ ^##\ [0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      DATE=$(date +"%Y-%m-%d")
+      awk -v date="$DATE" '/^## [0-9]+\.[0-9]+\.[0-9]+$/ && !added { print $0, date; added=1; next } 1' versionlog.md > tmpfile && mv tmpfile versionlog.md
+    fi
+  elif [ "$(head -n 1 versionlog.md)" != "## $VERSION" ]; then
     # Prepend the version to versionlog.md for date strategy
-    VERSION=$(bump)
     echo -e "## $VERSION\n\n$(cat versionlog.md)" > versionlog.md
   fi
 
-  git commit -am "Updated versionlog.md" --no-verify
-  export GIT_MERGE_AUTOEDIT=no
-  git flow release finish -m "release" -m "release"
+  if [[ -n $(git status --porcelain) ]]; then
+    git commit -am "Updated versionlog.md" --no-verify
+  fi
+}
+
+# Runs a release. If an earlier run stopped partway, picks up where it left off:
+#   - an unfinished release branch is checked out and finished
+#   - a release that was finished but never pushed is pushed
+
+function build()
+{
+  local release_branch
+  local release_prefix
+
+  git fetch --quiet origin
+  release_branch=$(find_release_branch)
+
+  if [ -n "$release_branch" ]; then
+    release_prefix=$(git config --get gitflow.prefix.release || echo "release/")
+    VERSION="${release_branch#"$release_prefix"}"
+    echo "Found unfinished release $VERSION. Picking up where it left off..."
+    echo "Skipping tests and version bump. They ran before this release was started."
+    git checkout "$release_branch"
+  elif release_needs_push; then
+    echo "Found a finished release on $BRANCH that was never pushed. Picking up where it left off..."
+    VERSION=""
+  else
+    if $SKIP_TESTS; then
+      echo "Skipping test execution."
+    else
+      run_tests
+    fi
+
+    if [ "$STRATEGY" != "semver" ]; then
+      bump_date_strategy
+    fi
+
+    # The release name. Passed to "git flow release finish" because the original
+    # git-flow (unlike the AVH edition) does not infer it from the current branch.
+    VERSION=$(bump)
+
+    echo "Preparing release $VERSION..."
+
+    git_release
+  fi
+
+  if [ -n "$VERSION" ]; then
+    update_versionlog
+
+    export GIT_MERGE_AUTOEDIT=no
+    git flow release finish -m "release" "$VERSION"
+  fi
 
   git_push_release
 
-  if [ "$STRATEGY" = "semver" ]; then
+  # For semver, develop moves on to the next version once the current one is tagged.
+  if [ "$STRATEGY" = "semver" ] && current_version_released; then
     git_next_version
   else
-  	git push
+    git push
   fi
 }
 
@@ -217,7 +311,7 @@ done
 # Set BRANCH to detected value or default to main branch
 BRANCH="${BRANCH:-$(get_main_branch)}"
 
-echo "do_release v1.1"
+echo "do_release v1.5"
 echo "Branch: $BRANCH"
 
 build

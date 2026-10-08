@@ -1,3 +1,7 @@
+## 2026.10.8.1
+
+* Build number now always increments.
+
 ## 2026.1.27
 
 * Added --no-verify for version file related commits to skip pre-commit hooks.
